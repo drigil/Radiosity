@@ -30,6 +30,11 @@ png_infop info_ptr;
 
 SceneCamera sceneCamera(glm::vec3(EYE_POS.x(), EYE_POS.y(), EYE_POS.z()));
 
+std::vector<Quad> radiosityMap; //To store the results after radiosity
+std::vector<Quad> *radiosityFaces;
+std::vector<Vertex> *radiosityVertices;
+std::vector<SubdivInfo> *radiositySubdivs;
+
 static bool firstRender = true;
 
 static void screenshotPNG(const char *filename)
@@ -84,7 +89,7 @@ static void screenshotPNG(const char *filename)
 }
 
 static void drawScene(void)
-{
+{   
     for (std::vector<Quad>::const_iterator iter = flatFaces.begin(),
              end = flatFaces.end(); iter != end; ++iter) {
         iter->render(vertices);
@@ -136,15 +141,15 @@ static bool facesUs(Quad const &q, std::vector<Vertex> const &vs)
 }
 
 // Normalise the brightness of non-emitting components
-void normaliseBrightness(std::vector<Quad> &qs, std::vector<Vertex> const &vs)
+void normaliseBrightness(std::vector<Quad> *qs, std::vector<Vertex> *vs)
 {
     const double TARGET = 1.0;
 
     double max = 0.0;
-    for (std::vector<Quad>::iterator iter = qs.begin(), end = qs.end();
+    for (std::vector<Quad>::iterator iter = qs->begin(), end = qs->end();
          iter != end; ++iter) {
         // Only include non-emitters, facing us.
-        if (!iter->isEmitter && facesUs(*iter, vs)) {
+        if (!iter->isEmitter && facesUs(*iter, *vs)) {
             max = std::max(max, iter->screenColour.r);
             max = std::max(max, iter->screenColour.g);
             max = std::max(max, iter->screenColour.b);
@@ -152,7 +157,7 @@ void normaliseBrightness(std::vector<Quad> &qs, std::vector<Vertex> const &vs)
     }
 
     double scale = max < TARGET ? TARGET / max : 1.0;
-    for (std::vector<Quad>::iterator iter = qs.begin(), end = qs.end();
+    for (std::vector<Quad>::iterator iter = qs->begin(), end = qs->end();
          iter != end; ++iter) {
         if (!iter->isEmitter) {
             iter->screenColour = iter->screenColour * scale;
@@ -177,6 +182,8 @@ void KeyboardCallback(unsigned char key, int x, int y){
         if(isIntersection == true){
             return;
         }
+        
+        generateQuads(radiosityFaces, radiosityVertices, radiositySubdivs);
 
         glLoadIdentity();
         gluLookAt(sceneCamera.Position.x, sceneCamera.Position.y, sceneCamera.Position.z,
@@ -190,6 +197,8 @@ void KeyboardCallback(unsigned char key, int x, int y){
             return;
         }
         
+        generateQuads(radiosityFaces, radiosityVertices, radiositySubdivs);
+
         glLoadIdentity();
         gluLookAt(sceneCamera.Position.x, sceneCamera.Position.y, sceneCamera.Position.z,
                   sceneCamera.Position.x + sceneCamera.Front.x, sceneCamera.Position.y + sceneCamera.Front.y, sceneCamera.Position.z + sceneCamera.Front.z,  // Looking at origin
@@ -202,6 +211,8 @@ void KeyboardCallback(unsigned char key, int x, int y){
             return;
         }
         
+        generateQuads(radiosityFaces, radiosityVertices, radiositySubdivs);
+
         glLoadIdentity();
         gluLookAt(sceneCamera.Position.x, sceneCamera.Position.y, sceneCamera.Position.z,
                   sceneCamera.Position.x + sceneCamera.Front.x, sceneCamera.Position.y + sceneCamera.Front.y, sceneCamera.Position.z + sceneCamera.Front.z,  // Looking at origin
@@ -214,6 +225,8 @@ void KeyboardCallback(unsigned char key, int x, int y){
             return;
         }
         
+        generateQuads(radiosityFaces, radiosityVertices, radiositySubdivs);
+
         glLoadIdentity();
         gluLookAt(sceneCamera.Position.x, sceneCamera.Position.y, sceneCamera.Position.z,
                   sceneCamera.Position.x + sceneCamera.Front.x, sceneCamera.Position.y + sceneCamera.Front.y, sceneCamera.Position.z + sceneCamera.Front.z,  // Looking at origin
@@ -226,6 +239,93 @@ void KeyboardCallback(unsigned char key, int x, int y){
         std::string path = "../png/" + currentDateTime() + ".png";
         screenshotPNG(path.c_str());
     }
+}
+
+
+void computeSpecularity(std::vector<Quad> *qs, std::vector<Vertex> *vs){
+
+    int const n = radiosityMap.size();
+    std::vector<Colour> updatedColours(n);
+    std::vector<float> pos = getCameraPos();
+
+    Vertex lightVector(0, 0, 0);
+    Vertex viewVector(0, 0, 0);
+    Vertex normalVector(0, 0, 0);
+    Vertex reflectedVector(0, 0, 0);
+    Colour whiteLight(1, 1, 1);
+    float dotProduct;
+    float specularVal;
+    float specularPower = 128.0f;
+    float specularFactor = 0.02f;
+
+    // Iterate over targets
+    for (int i = 0; i < n; ++i) {
+
+        updatedColours[i] = radiosityMap[i].screenColour;
+        Colour incoming = Colour(0.0f, 0.0f, 0.0f);
+        
+        if (radiosityMap[i].isSpecular == false) {
+            continue;
+        }
+
+        else {
+            // Iterate over sources
+            for (int j = 0; j < n; ++j) {
+                if (i == j) {
+                    continue;
+                }
+
+                if(radiosityMap[j].isEmitter){
+                    //Get the light vector
+                    lightVector = paraCentre(radiosityMap[i], *vs) - paraCentre(radiosityMap[j], *vs);
+                    lightVector = lightVector.norm();
+
+                    //Get the normal vector
+                    normalVector = paraCross(radiosityMap[i], *vs);
+                    normalVector = normalVector.norm();
+
+                    //Get the reflected vector
+                    dotProduct = 2 * dot(normalVector, lightVector);
+                    reflectedVector = (normalVector * dotProduct) - lightVector;
+                    reflectedVector = reflectedVector.norm();
+
+                    //Get the view vector
+                    viewVector = Vertex(pos[0], pos[1], pos[2]) - paraCentre(radiosityMap[i], *vs);
+                    viewVector = viewVector.norm() * -1.0f;
+
+                    //Get the specular quantitiy
+                    specularVal = std::pow(std::max((float)dot(reflectedVector, viewVector), 0.0f), specularPower);
+                    incoming += whiteLight * specularVal * specularFactor;
+                }
+            }
+
+            updatedColours[i] = updatedColours[i] + incoming;   //
+            // printf("specular color %f %f %f\n", incoming.r, incoming.g, incoming.b); 
+        }
+
+    }
+
+    for (int i = 0; i < n; ++i) {
+        qs->at(i).screenColour = updatedColours[i];
+    }
+}
+
+
+void generateQuads(std::vector<Quad> *f, std::vector<Vertex> *v, std::vector<SubdivInfo> *subdivs){
+
+    computeSpecularity(f, v);
+    normaliseBrightness(f, v);
+    
+    std::vector<Vertex> gVertices;
+    std::vector<GouraudQuad> gourauds;
+
+    for (std::vector<SubdivInfo>::iterator iter = subdivs->begin(),
+             end = subdivs->end(); iter != end; ++iter) {
+        iter->generateGouraudQuads(gourauds, gVertices);
+    }
+
+    gouraudFaces = gourauds;
+    vertices = gVertices;
 }
 
 static void render()
@@ -255,10 +355,14 @@ void renderFlat(std::vector<Quad> f, std::vector<Vertex> v)
     render();
 }
 
-void renderGouraud(std::vector<GouraudQuad> f, std::vector<Vertex> v)
-{
-    gouraudFaces = f;
-    vertices = v;
+void renderGouraud(std::vector<Quad> *f, std::vector<Vertex> *v, std::vector<SubdivInfo> *subdivs)
+{   
+    radiosityMap = *f;
+    radiosityFaces = f;
+    radiosityVertices = v;
+    radiositySubdivs = subdivs;
+
+    generateQuads(f, v, subdivs);
     render();
 }
 

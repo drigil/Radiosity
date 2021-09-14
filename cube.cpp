@@ -80,74 +80,6 @@ void iterateLighting(std::vector<Quad> &qs, std::vector<double> const &transfers
     }
 }
 
-void computeSpecularity(std::vector<Quad> &qs, std::vector<Vertex> const &vs, std::vector<double> const &transfers){
-
-    int const n = qs.size();
-    std::vector<Colour> updatedColours(n);
-    std::vector<float> pos = getCameraPos();
-
-    Vertex lightVector(0, 0, 0);
-    Vertex viewVector(0, 0, 0);
-    Vertex normalVector(0, 0, 0);
-    Vertex reflectedVector(0, 0, 0);
-    Colour whiteLight(1, 1, 1);
-    float dotProduct;
-    float specularVal;
-    float specularPower = 32.0f;
-    float specularFactor = 0.02f;
-
-    // Iterate over targets
-    for (int i = 0; i < n; ++i) {
-
-        updatedColours[i] = qs[i].screenColour;
-        Colour incoming = Colour(0.0f, 0.0f, 0.0f);
-        
-        if (qs[i].isSpecular == false) {
-            continue;
-        }
-
-        else {
-            // Iterate over sources
-            for (int j = 0; j < n; ++j) {
-                if (i == j) {
-                    continue;
-                }
-
-                if(qs[j].isEmitter){
-                    //Get the light vector
-                    lightVector = paraCentre(qs[i], vs) - paraCentre(qs[j], vs);
-                    lightVector = lightVector.norm();
-
-                    //Get the normal vector
-                    normalVector = paraCross(qs[i], vs);
-                    normalVector = normalVector.norm();
-
-                    //Get the reflected vector
-                    dotProduct = 2 * dot(normalVector, lightVector);
-                    reflectedVector = (normalVector * dotProduct) - lightVector;
-                    reflectedVector = reflectedVector.norm();
-
-                    //Get the view vector
-                    viewVector = Vertex(pos[0], pos[1], pos[2]) - paraCentre(qs[i], vs);
-                    viewVector = viewVector.norm() * -1.0f;
-
-                    //Get the specular quantitiy
-                    specularVal = std::pow(std::max((float)dot(reflectedVector, viewVector), 0.0f), specularPower);
-                    incoming += whiteLight * specularVal * specularFactor;
-                }
-            }
-
-            updatedColours[i] = updatedColours[i] + incoming;   //
-            printf("specular color %f %f %f\n", incoming.r, incoming.g, incoming.b); 
-        }
-
-    }
-
-    for (int i = 0; i < n; ++i) {
-        qs[i].screenColour = updatedColours[i];
-    }
-}
-
 // Calculate the total light in the scene, as area-weight sum of
 // screenColour.
 double calcLight(std::vector<Quad> &qs, std::vector<Vertex> const &vs)
@@ -219,22 +151,7 @@ int main(int argc, char **argv)
         std::cout << "Total light: " << light << std::endl;
     } while (relChange > CONVERGENCE_TARGET);
 
-    printf("%s\n", "Computing specularity");
-    computeSpecularity(faces, vertices, transfers);
-
-    printf("%s\n", "Total Light Computed");
-    normaliseBrightness(faces, vertices);
-    printf("%s\n", "Normalized Brightness");
+    renderGouraud(&faces, &vertices, &subdivs);    
     
-    std::vector<Vertex> gVertices;
-    std::vector<GouraudQuad> gourauds;
-
-    for (std::vector<SubdivInfo>::iterator iter = subdivs.begin(),
-             end = subdivs.end(); iter != end; ++iter) {
-        iter->generateGouraudQuads(gourauds, gVertices);
-    }
-    printf("%s\n", "Generated Quads");
-    renderGouraud(gourauds, gVertices);
-    printf("%s\n", "Rendered Quads");
     return 0;
 }
